@@ -120,7 +120,7 @@ class OpenAIREAuthSettingsHelper(OAuthSettingsHelper):
         return dict(
             authorized_handler='invenio_oauthclient.handlers'
                                ':authorized_signup_handler',
-            disconnect_handler='invenio_oauthclient.contrib.openaire'
+            disconnect_handler='invenio_oauthclient.contrib.openaire_aai'
                                ':disconnect_handler',
             signup_handler=dict(
                 info='invenio_oauthclient.contrib.openaire_aai:account_info',
