@@ -15,6 +15,7 @@ from flask import abort, current_app, session
 from flask_login import current_user
 from invenio_db import db
 from werkzeug.utils import import_string
+from datetime import datetime, timedelta
 
 from ..errors import OAuthClientError, OAuthRejectedRequestError, \
     OAuthResponseError
@@ -114,17 +115,32 @@ def oauth2_token_setter(remote, resp, token_type='', extra_data=None):
     :param extra_data: Extra information. (Default: ``None``)
     :returns: A :class:`invenio_oauthclient.models.RemoteToken` instance.
     """
+
+    expires_in = resp['expires_in'] - 599 #todo: for testing
+
+    refresh_token = None
+
+    session_key = token_session_key(remote.name)
+    token = session.get(session_key, None)
+
+    if token is not None:
+        refresh_token = token[4]
+    elif 'refresh_token' in resp:
+        refresh_token = resp['refresh_token']
+
     return token_setter(
         remote,
         resp['access_token'],
         secret='',
         token_type=token_type,
+        expires_in=expires_in,
         extra_data=extra_data,
+        refresh_token=refresh_token
     )
 
 
-def token_setter(remote, token, secret='', token_type='', extra_data=None,
-                 user=None):
+def token_setter(remote, token, secret='', token_type='', expires_in=None, extra_data=None,
+                 refresh_token=None, user=None):
     """Set token for user.
 
     :param remote: The remote application.
@@ -136,7 +152,15 @@ def token_setter(remote, token, secret='', token_type='', extra_data=None,
     :returns: A :class:`invenio_oauthclient.models.RemoteToken` instance or
         ``None``.
     """
-    session[token_session_key(remote.name)] = (token, secret)
+
+    fetched_at = datetime.utcnow()
+
+    if expires_in is not None:
+        expires_in = timedelta(seconds=expires_in)
+
+    session[token_session_key(remote.name)] = (token, secret, fetched_at,
+        expires_in, refresh_token)
+
     user = user or current_user
 
     # Save token if user is not anonymous (user exists but can be not active at

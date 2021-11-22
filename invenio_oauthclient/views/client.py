@@ -8,15 +8,18 @@
 
 """Client blueprint used to handle OAuth callbacks."""
 
-from flask import Blueprint, abort, current_app, redirect, request, url_for
-from flask_oauthlib.client import OAuthException
+from flask import Blueprint, abort, current_app, redirect, request, url_for, session, request
+from flask_login import current_user
+
+from flask_oauthlib.client import OAuthException, OAuthResponse
 from invenio_accounts.views import login as base_login
 from invenio_db import db
 from itsdangerous import BadData
 
+from ..models import RemoteToken
 from .._compat import _create_identifier
 from ..errors import OAuthRemoteNotFound
-from ..handlers import set_session_next_url
+from ..handlers import set_session_next_url, response_token_setter, token_getter
 from ..handlers.rest import response_handler
 from ..proxies import current_oauthclient
 from ..utils import get_safe_redirect_target, serializer
@@ -129,7 +132,8 @@ def _login(remote_app, authorized_view_name):
 def login(remote_app):
     """Send user to remote application for authentication."""
     try:
-        return _login(remote_app, '.authorized')
+        login = _login(remote_app, '.authorized')
+        return login
     except OAuthRemoteNotFound:
         return abort(404)
 
@@ -223,6 +227,59 @@ def rest_authorized(remote_app=None):
             )
         else:
             raise
+
+
+def _refresh_token(remote_app):
+    print("Refreshing token")
+    oauth = current_oauthclient.oauth
+    remote = oauth.remote_apps[remote_app]
+    token = token_getter(remote)
+    refresh_token = token[4]
+
+    data = {}
+    data['grant_type'] = 'refresh_token'
+    data['refresh_token'] = refresh_token
+    data['client_id'] = remote.consumer_key
+    data['client_secret'] = remote.consumer_secret
+
+    resp = remote.post(remote.access_token_url, data=data)
+
+    return parse_authorized_response(remote, token, resp)
+
+def parse_authorized_response(remote, token, resp):
+    if resp is None:
+        return 'Access denied: reason=%s error=%s' % (
+            request.args['error_reason'],
+            request.args['error_description']
+        )
+    if isinstance(resp, dict):
+            print("\n\nResponse is dict\n\n")
+    elif isinstance(resp, OAuthResponse):
+        if resp.status != 200:
+            print(f"\n\nStatus code: {resp.status}\n\n")
+        else:
+            print(f"\n\nResponse: {resp.data}\n\n")
+            response_token_setter(remote, resp.data)
+            token = token_getter(remote)
+            print(f"\n\nNew token: {token}\n\n")
+    else:
+        raise Exception()
+    return resp
+
+@blueprint.route('/refresh-token/<remote_app>/')
+def refresh_token(remote_app):
+    """Send user to remote application for token refresh."""
+
+    try:
+        next_url = get_safe_redirect_target(arg='next')
+        print(f"\n\n****\nRefreshing token for {remote_app}\n****\n\n")
+        print(f"\n\nNext url: {next_url}\n\n")
+        resp = _refresh_token(remote_app)
+        print(f"Resp: {resp.status}")
+        # return "hi"
+        return redirect(next_url)
+    except OAuthRemoteNotFound:
+        return abort(404)
 
 
 def _signup(remote_app):
